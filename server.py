@@ -23,7 +23,7 @@ except ImportError:
 # bot_id -> (api_key, websocket) for phones
 clients = {}
 
-async def handle_ws(ws, path):
+async def handle_ws(ws):
     bot_id, api_key = None, None
     try:
         msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
