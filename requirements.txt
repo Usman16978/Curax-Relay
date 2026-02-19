@@ -1,2 +1,2 @@
-#This is now a code
 aiohttp>=3.9.0
+websockets>=12.0
