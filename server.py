@@ -5,45 +5,91 @@ import urllib.request
 from typing import Dict, Optional, Tuple
 
 from aiohttp import WSMsgType, web
+from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 
 # bot_id -> (api_key, websocket_or_None, fcm_token_or_None)
 # When app disconnects we keep (api_key, None, fcm_token) so we can still send via FCM.
 clients: Dict[str, Tuple[str, Optional[web.WebSocketResponse], Optional[str]]] = {}
 
-FCM_SERVER_KEY = os.environ.get("FCM_SERVER_KEY", "").strip()
+FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
+FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+FIREBASE_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
+
+_fcm_creds = None
+
+
+def _get_fcm_credentials():
+    global _fcm_creds
+    if _fcm_creds is not None:
+        return _fcm_creds
+
+    if not FIREBASE_SERVICE_ACCOUNT_JSON:
+        return None
+
+    try:
+        info = json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
+        _fcm_creds = service_account.Credentials.from_service_account_info(
+            info,
+            scopes=[FIREBASE_SCOPE],
+        )
+        return _fcm_creds
+    except Exception as e:
+        print(f"  FCM credentials load error: {e}")
+        return None
+
+
+def _get_access_token() -> Optional[str]:
+    creds = _get_fcm_credentials()
+    if creds is None:
+        return None
+
+    try:
+        if not creds.valid or creds.expired or not creds.token:
+            creds.refresh(Request())
+        return creds.token
+    except Exception as e:
+        print(f"  FCM token refresh error: {e}")
+        return None
 
 
 def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
-    """Send FCM message via legacy API.
-
-    Returns True only when FCM response confirms success > 0.
-    """
-    if not FCM_SERVER_KEY or not token:
+    """Send FCM message via HTTP v1. Returns True only when accepted by FCM."""
+    if not FIREBASE_PROJECT_ID or not token:
         return False
 
-    url = "https://fcm.googleapis.com/fcm/send"
-    body = json.dumps(
-        {
-            "to": token,
-            "priority": "high",
-            "content_available": True,
-            # Include notification payload so Android system can display while app is idle/closed.
+    access_token = _get_access_token()
+    if not access_token:
+        return False
+
+    url = f"https://fcm.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/messages:send"
+    body = {
+        "message": {
+            "token": token,
             "notification": {
                 "title": "Curax Alert",
                 "body": message,
-                "sound": "default",
-                "android_channel_id": "curax_alert_channel",
             },
-            "data": {"type": alert_type, "message": message},
+            "data": {
+                "type": alert_type,
+                "message": message,
+            },
+            "android": {
+                "priority": "HIGH",
+                "notification": {
+                    "channel_id": "curax_alert_channel",
+                    "sound": "default",
+                },
+            },
         }
-    ).encode("utf-8")
+    }
 
     req = urllib.request.Request(
         url,
-        data=body,
+        data=json.dumps(body).encode("utf-8"),
         headers={
-            "Authorization": f"key={FCM_SERVER_KEY}",
-            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json; charset=UTF-8",
         },
         method="POST",
     )
@@ -52,12 +98,8 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
         with urllib.request.urlopen(req, timeout=10) as r:
             if not (200 <= r.status < 300):
                 return False
-            raw = r.read().decode("utf-8", errors="ignore") or "{}"
-            resp = json.loads(raw)
-            if int(resp.get("success", 0)) > 0:
-                return True
-            print(f"  FCM not accepted for token: {resp}")
-            return False
+            _ = r.read()
+            return True
     except Exception as e:
         print(f"  FCM send error: {e}")
         return False
@@ -160,10 +202,11 @@ async def root_handler(request: web.Request) -> web.StreamResponse:
 
 async def on_startup(_: web.Application) -> None:
     port = int(os.environ.get("PORT", 5050))
+    creds_ready = bool(FIREBASE_PROJECT_ID and FIREBASE_SERVICE_ACCOUNT_JSON)
     print(f"Cloud relay: WebSocket+HTTP port {port}")
     print(
-        "Link by Bot ID + API Key. FCM push when app closed: "
-        + ("enabled" if FCM_SERVER_KEY else "disabled (set FCM_SERVER_KEY)")
+        "Link by Bot ID + API Key. FCM v1 push: "
+        + ("enabled" if creds_ready else "disabled (set FIREBASE_PROJECT_ID + FIREBASE_SERVICE_ACCOUNT_JSON)")
     )
 
 
