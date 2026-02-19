@@ -14,7 +14,10 @@ FCM_SERVER_KEY = os.environ.get("FCM_SERVER_KEY", "").strip()
 
 
 def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
-    """Send FCM message via legacy API. Runs in thread."""
+    """Send FCM message via legacy API.
+
+    Returns True only when FCM response confirms success > 0.
+    """
     if not FCM_SERVER_KEY or not token:
         return False
 
@@ -24,6 +27,13 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
             "to": token,
             "priority": "high",
             "content_available": True,
+            # Include notification payload so Android system can display while app is idle/closed.
+            "notification": {
+                "title": "Curax Alert",
+                "body": message,
+                "sound": "default",
+                "android_channel_id": "curax_alert_channel",
+            },
             "data": {"type": alert_type, "message": message},
         }
     ).encode("utf-8")
@@ -40,7 +50,14 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
 
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
-            return 200 <= r.status < 300
+            if not (200 <= r.status < 300):
+                return False
+            raw = r.read().decode("utf-8", errors="ignore") or "{}"
+            resp = json.loads(raw)
+            if int(resp.get("success", 0)) > 0:
+                return True
+            print(f"  FCM not accepted for token: {resp}")
+            return False
     except Exception as e:
         print(f"  FCM send error: {e}")
         return False
@@ -84,7 +101,7 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
                     fcm_token = entry[2]
                     sent = False
 
-                    # FCM-first delivery path (works when phone screen/app is off).
+                    # FCM-first delivery path.
                     if fcm_token and await send_fcm(fcm_token, atype, amsg):
                         sent = True
                         print(f"  -> Pushed via FCM: {bid}")
