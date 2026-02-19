@@ -66,20 +66,14 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
     body = {
         "message": {
             "token": token,
-            "notification": {
-                "title": "Curax Alert",
-                "body": message,
-            },
+            # Data-only message ensures Android service handles it and stores alert in DB.
             "data": {
                 "type": alert_type,
                 "message": message,
             },
             "android": {
                 "priority": "HIGH",
-                "notification": {
-                    "channel_id": "curax_alert_channel",
-                    "sound": "default",
-                },
+                "ttl": "120s",
             },
         }
     }
@@ -220,3 +214,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
