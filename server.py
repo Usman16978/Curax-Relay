@@ -10,7 +10,7 @@ Deploy to Render.com:
   3. Start: python server.py (or use Procfile: web: python server.py)
   4. Set env var PORT (Render sets this automatically).
   5. Optional: set FCM_SERVER_KEY (Firebase Console -> Project Settings -> Cloud Messaging -> Server key) to push when app is closed.
-  6. Your URL will be like https://curax-relay.onrender.com — use that as Server URL everywhere.
+  6. Your URL will be like https://curax-relay.onrender.com - use that as Server URL everywhere.
 """
 import asyncio
 import json
@@ -38,6 +38,8 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
     url = "https://fcm.googleapis.com/fcm/send"
     body = json.dumps({
         "to": token,
+        "priority": "high",
+        "content_available": True,
         "data": {"type": alert_type, "message": message},
     }).encode("utf-8")
     req = urllib.request.Request(
@@ -84,7 +86,15 @@ async def handle_ws(ws):
                     ws_sock = entry[1]
                     fcm_token = entry[2]
                     sent = False
-                    if ws_sock is not None:
+
+                    # FCM-first delivery path (works when phone screen/app is off).
+                    if fcm_token:
+                        if await send_fcm(fcm_token, atype, amsg):
+                            sent = True
+                            print(f"  -> Pushed via FCM: {bid}")
+
+                    # WebSocket fallback if FCM token missing or send failed.
+                    if not sent and ws_sock is not None:
                         try:
                             await ws_sock.send(payload)
                             sent = True
@@ -92,10 +102,7 @@ async def handle_ws(ws):
                         except Exception as e:
                             print(f"  WebSocket send error: {e}")
                             clients[bid] = (entry[0], None, entry[2])
-                    if not sent and fcm_token:
-                        if await send_fcm(fcm_token, atype, amsg):
-                            sent = True
-                            print(f"  -> Pushed via FCM: {bid}")
+
                     if not sent:
                         print(f"  -> No app connected for {bid}, alert not delivered")
             except Exception as e:
@@ -144,3 +151,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
