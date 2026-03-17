@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import urllib.request
+import urllib.error
 from typing import Dict, Optional, Tuple
 
 from aiohttp import WSMsgType, web
@@ -102,6 +103,13 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
                 return False
             _ = r.read()
             return True
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            body = ""
+        print(f"  FCM send error: HTTP {e.code} {e.reason} body={body}")
+        return False
     except Exception as e:
         print(f"  FCM send error: {e}")
         return False
