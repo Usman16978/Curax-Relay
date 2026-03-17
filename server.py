@@ -122,8 +122,8 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         bot_id = (data.get("bot_id") or "").strip()
         api_key = (data.get("api_key") or "").strip()
 
-        # Backend/desktop sends one message: action="alert", bot_id, api_key, type, message, optional fcm_token
-        # FCM first (using token from payload, then from in-memory clients), then WebSocket fallback.
+        # Backend sends: action="alert", bot_id, api_key, type, message, fcm_token (from DB).
+        # Alert goes directly via FCM when we have fcm_token – no app socket needed. Socket is optional fallback.
         if data.get("action") == "alert":
             bid = (data.get("bot_id") or "").strip()
             akey = (data.get("api_key") or "").strip()
@@ -140,24 +140,27 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
                 mem_fcm = entry[2] if entry else None
                 fcm_token = payload_fcm or mem_fcm
 
-                # FCM-first: try with token from backend (DB) or from app registration.
-                if fcm_token and await send_fcm(fcm_token, atype, amsg):
-                    sent = True
-                    print(f"  -> Pushed via FCM: {bid}")
+                # Primary path: FCM (works when phone off; no socket needed).
+                if fcm_token:
+                    if await send_fcm(fcm_token, atype, amsg):
+                        sent = True
+                        print(f"  -> Pushed via FCM: {bid}")
+                    else:
+                        print(f"  -> FCM send failed for {bid} (check token/credentials)")
 
-                # WebSocket fallback if FCM missing or failed (e.g. app in foreground).
+                # Optional fallback: WebSocket only if FCM failed or no token.
                 if not sent and ws_sock is not None and not ws_sock.closed:
                     try:
                         await ws_sock.send_str(payload)
                         sent = True
-                        print(f"  -> Forwarded to app (WebSocket): {bid}")
+                        print(f"  -> Forwarded via WebSocket: {bid}")
                     except Exception as e:
                         print(f"  WebSocket send error: {e}")
                         if entry is not None:
                             clients[bid] = (entry[0], None, entry[2])
 
                 if not sent:
-                    print(f"  -> No app connected for {bid}, alert not delivered")
+                    print(f"  -> Alert not delivered for {bid} (no FCM token or WebSocket)")
             except Exception as e:
                 print(f"  Forward alert error: {e}")
 
