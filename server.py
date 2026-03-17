@@ -83,6 +83,7 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
                     "priority": "high",
                     "visibility": "public",
                     "default_sound": True,
+                    "click_action": "CURAX_ALERT",
                 },
             },
         }
