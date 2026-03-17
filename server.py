@@ -3,7 +3,6 @@ import json
 import os
 import urllib.request
 from typing import Dict, Optional, Tuple
-import time
 
 from aiohttp import WSMsgType, web
 from google.auth.transport.requests import Request
@@ -12,41 +11,6 @@ from google.oauth2 import service_account
 # bot_id -> (api_key, websocket_or_None, fcm_token_or_None)
 # When app disconnects we keep (api_key, None, fcm_token) so we can still send via FCM.
 clients: Dict[str, Tuple[str, Optional[web.WebSocketResponse], Optional[str]]] = {}
-TOKEN_STORE_PATH = os.environ.get("TOKEN_STORE_PATH", "tokens.json")
-
-
-def _load_tokens() -> None:
-    """Load persisted bot_id -> (api_key, None, fcm_token) into clients map."""
-    try:
-        if not os.path.exists(TOKEN_STORE_PATH):
-            return
-        with open(TOKEN_STORE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f) or {}
-        for bid, entry in data.items():
-            api_key = (entry.get("api_key") or "").strip()
-            fcm = (entry.get("fcm_token") or "").strip() or None
-            if api_key and fcm:
-                clients[bid] = (api_key, None, fcm)
-    except Exception as e:
-        print(f"  Token store load error: {e}")
-
-
-def _save_token(bot_id: str, api_key: str, fcm_token: str) -> None:
-    """Persist latest token so FCM works even after relay restart / scale-to-zero."""
-    try:
-        data = {}
-        if os.path.exists(TOKEN_STORE_PATH):
-            with open(TOKEN_STORE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f) or {}
-        data[bot_id] = {
-            "api_key": api_key,
-            "fcm_token": fcm_token,
-            "updated_at": int(time.time()),
-        }
-        with open(TOKEN_STORE_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except Exception as e:
-        print(f"  Token store save error: {e}")
 
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
 FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
@@ -211,8 +175,6 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         fcm_token = (data.get("fcm_token") or "").strip() or None
         old = clients.get(bot_id)
         clients[bot_id] = (api_key, ws, fcm_token or (old[2] if old else None))
-        if fcm_token:
-            _save_token(bot_id, api_key, fcm_token)
         print(f"  Bot linked: {bot_id}" + (" (FCM token stored)" if fcm_token else ""))
 
         async for msg in ws:
@@ -235,7 +197,6 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
 
 async def status_handler(request: web.Request) -> web.StreamResponse:
     """GET /status → { "fcm_configured": true|false }. Safe to call to verify FCM env vars are set (no secrets)."""
-    _load_tokens()
     creds_ready = bool(FIREBASE_PROJECT_ID and FIREBASE_SERVICE_ACCOUNT_JSON)
     return web.json_response({"fcm_configured": creds_ready, "relay": "ok"})
 
