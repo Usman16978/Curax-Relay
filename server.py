@@ -63,7 +63,7 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
         return False
 
     url = f"https://fcm.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/messages:send"
-    title = "Medicine reminder" if "medicine" in alert_type.lower() or alert_type in ("time", "pre") else "Curax Alert"
+    # Data-only so the app always gets onMessageReceived and can show notification with full-screen intent (wake screen)
     body = {
         "message": {
             "token": token,
@@ -71,17 +71,9 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
                 "type": alert_type,
                 "message": message,
             },
-            "notification": {
-                "title": title,
-                "body": message,
-            },
             "android": {
                 "priority": "HIGH",
                 "ttl": "120s",
-                "notification": {
-                    "channel_id": "curax_alert_channel",
-                    "priority": "high",
-                },
             },
         }
     }
