@@ -79,13 +79,9 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
                 "ttl": "120s",
                 "notification": {
                     "channel_id": "curax_alert_channel",
-                    "priority": "max",
-                    "visibility": "public",
                     "sound": "default",
-                    "default_sound": True,
-                    "notification_priority": "PRIORITY_MAX",
-                    "click_action": "CURAX_ALERT",
-                },
+                    "visibility": "public"
+                }
             },
         }
     }
@@ -190,7 +186,9 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         fcm_token = (data.get("fcm_token") or "").strip() or None
         old = clients.get(bot_id)
         clients[bot_id] = (api_key, ws, fcm_token or (old[2] if old else None))
-        print(f"  Bot linked: {bot_id}" + (" (FCM token stored)" if fcm_token else ""))
+        print(f"  Bot linked: {bot_id}" + (" (FCM token stored)" if fcm_token else " (NO FCM token)"))
+        if fcm_token:
+            print(f"  FCM token len={len(fcm_token)} prefix={fcm_token[:12]}")
 
         async for msg in ws:
             if msg.type in (WSMsgType.CLOSED, WSMsgType.CLOSE, WSMsgType.ERROR):
