@@ -122,38 +122,42 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         bot_id = (data.get("bot_id") or "").strip()
         api_key = (data.get("api_key") or "").strip()
 
-        # Desktop sends one message: action="alert", bot_id, api_key, type, message
+        # Backend/desktop sends one message: action="alert", bot_id, api_key, type, message, optional fcm_token
+        # FCM first (using token from payload, then from in-memory clients), then WebSocket fallback.
         if data.get("action") == "alert":
             bid = (data.get("bot_id") or "").strip()
             akey = (data.get("api_key") or "").strip()
             atype = data.get("type", "alert")
             amsg = data.get("message", "")
             payload = json.dumps({"type": atype, "message": amsg})
+            # Prefer fcm_token from payload (backend sends from DB) so FCM works even if app never connected to relay.
+            payload_fcm = (data.get("fcm_token") or "").strip() or None
 
             try:
-                if bid in clients and clients[bid][0] == akey:
-                    entry = clients[bid]
-                    ws_sock = entry[1]
-                    fcm_token = entry[2]
-                    sent = False
+                sent = False
+                entry = clients.get(bid) if (bid in clients and clients[bid][0] == akey) else None
+                ws_sock = entry[1] if entry else None
+                mem_fcm = entry[2] if entry else None
+                fcm_token = payload_fcm or mem_fcm
 
-                    # FCM-first delivery path.
-                    if fcm_token and await send_fcm(fcm_token, atype, amsg):
+                # FCM-first: try with token from backend (DB) or from app registration.
+                if fcm_token and await send_fcm(fcm_token, atype, amsg):
+                    sent = True
+                    print(f"  -> Pushed via FCM: {bid}")
+
+                # WebSocket fallback if FCM missing or failed (e.g. app in foreground).
+                if not sent and ws_sock is not None and not ws_sock.closed:
+                    try:
+                        await ws_sock.send_str(payload)
                         sent = True
-                        print(f"  -> Pushed via FCM: {bid}")
-
-                    # WebSocket fallback if FCM token missing or send failed.
-                    if not sent and ws_sock is not None and not ws_sock.closed:
-                        try:
-                            await ws_sock.send_str(payload)
-                            sent = True
-                            print(f"  -> Forwarded to app (WebSocket): {bid}")
-                        except Exception as e:
-                            print(f"  WebSocket send error: {e}")
+                        print(f"  -> Forwarded to app (WebSocket): {bid}")
+                    except Exception as e:
+                        print(f"  WebSocket send error: {e}")
+                        if entry is not None:
                             clients[bid] = (entry[0], None, entry[2])
 
-                    if not sent:
-                        print(f"  -> No app connected for {bid}, alert not delivered")
+                if not sent:
+                    print(f"  -> No app connected for {bid}, alert not delivered")
             except Exception as e:
                 print(f"  Forward alert error: {e}")
 
@@ -188,6 +192,12 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+async def status_handler(request: web.Request) -> web.StreamResponse:
+    """GET /status → { "fcm_configured": true|false }. Safe to call to verify FCM env vars are set (no secrets)."""
+    creds_ready = bool(FIREBASE_PROJECT_ID and FIREBASE_SERVICE_ACCOUNT_JSON)
+    return web.json_response({"fcm_configured": creds_ready, "relay": "ok"})
+
+
 async def root_handler(request: web.Request) -> web.StreamResponse:
     if request.headers.get("Upgrade", "").lower() == "websocket":
         return await handle_websocket(request)
@@ -208,6 +218,7 @@ def main() -> None:
     port = int(os.environ.get("PORT", 5050))
     app = web.Application()
     app.on_startup.append(on_startup)
+    app.router.add_get("/status", status_handler)
     app.router.add_route("*", "/", root_handler)
     web.run_app(app, host="0.0.0.0", port=port)
 
