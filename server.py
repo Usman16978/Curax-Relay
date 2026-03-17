@@ -149,7 +149,10 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
                 mem_fcm = entry[2] if entry else None
                 fcm_token = payload_fcm or mem_fcm
 
-                # Primary path: FCM (works when phone off; no socket needed).
+                if not fcm_token:
+                    print(f"  -> No FCM token for {bid} (backend must get token from app save-credentials / FCM active)")
+
+                # Primary path: FCM first (works when screen off / FCM active; no socket needed).
                 if fcm_token:
                     if await send_fcm(fcm_token, atype, amsg):
                         sent = True
@@ -157,7 +160,7 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
                     else:
                         print(f"  -> FCM send failed for {bid} (check token/credentials)")
 
-                # Optional fallback: WebSocket only if FCM failed or no token.
+                # Fallback: WebSocket only if FCM failed or no token.
                 if not sent and ws_sock is not None and not ws_sock.closed:
                     try:
                         await ws_sock.send_str(payload)
