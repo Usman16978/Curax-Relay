@@ -10,7 +10,7 @@ from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 
 # bot_id -> (api_key, websocket_or_None, fcm_token_or_None)
-# When app disconnects we keep (api_key, None, fcm_token) so we can still send via FCM.
+# We keep only live sockets in memory; FCM tokens must come from payload.
 clients: Dict[str, Tuple[str, Optional[web.WebSocketResponse], Optional[str]]] = {}
 
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
@@ -135,16 +135,18 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
             payload = json.dumps({"type": atype, "message": amsg})
             # Prefer fcm_token from payload (backend sends from DB) so FCM works even if app never connected to relay.
             payload_fcm = (data.get("fcm_token") or "").strip() or None
-
+            print(f"  Incoming alert for bot_id={bid} payload_fcm={'yes' if payload_fcm else 'no'}")
+            fcm_token = payload_fcm
+            use_ws = fcm_token is not None
+            if not fcm_token:
+                print(f"  -> Missing payload FCM for {bid} (backend must send fcm_token)")
             try:
                 sent = False
                 entry = clients.get(bid) if (bid in clients and clients[bid][0] == akey) else None
                 ws_sock = entry[1] if entry else None
-                mem_fcm = entry[2] if entry else None
-                fcm_token = payload_fcm or mem_fcm
+                if not use_ws:
+                    ws_sock = None
 
-                if not fcm_token:
-                    print(f"  -> No FCM token for {bid} (backend must get token from app save-credentials / FCM active)")
 
                 # Primary path: FCM first (works when screen off / FCM active; no socket needed).
                 if fcm_token:
@@ -179,9 +181,8 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
             return ws
 
         fcm_token = (data.get("fcm_token") or "").strip() or None
-        old = clients.get(bot_id)
-        clients[bot_id] = (api_key, ws, fcm_token or (old[2] if old else None))
-        print(f"  Bot linked: {bot_id}" + (" (FCM token stored)" if fcm_token else " (NO FCM token)"))
+        clients[bot_id] = (api_key, ws, None)
+        print(f"  Bot linked: {bot_id}" + (" (FCM token seen)" if fcm_token else " (NO FCM token)"))
         if fcm_token:
             print(f"  FCM token len={len(fcm_token)} prefix={fcm_token[:12]}")
 
@@ -196,9 +197,9 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         await ws.close(code=1000, message=b"ok")
     finally:
         if bot_id and bot_id in clients and clients[bot_id][1] is ws:
-            # Keep entry for FCM when app is closed; set ws to None.
-            clients[bot_id] = (clients[bot_id][0], None, clients[bot_id][2])
-            print(f"  Bot disconnected (FCM still active): {bot_id}")
+            # Clear from memory to avoid stale bot_id cache.
+            del clients[bot_id]
+            print(f"  Bot disconnected (cleared): {bot_id}")
 
     return ws
 
