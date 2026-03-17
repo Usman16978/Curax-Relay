@@ -63,30 +63,18 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
         return False
 
     url = f"https://fcm.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/messages:send"
-    title = "Medicine reminder" if "medicine" in alert_type.lower() or alert_type in ("time", "pre") else "Alert"
-    # MUST: notification + data, priority high — so screen wakes when off (Test Alert / medicine)
+    # Data-only + high priority so onMessageReceived runs even in background,
+    # letting the app post a full-screen notification to wake the screen.
     body = {
         "message": {
             "token": token,
             "data": {"type": alert_type, "message": message},
-            "notification": {
-                "title": title,
-                "body": message,
-                "sound": "default",
-            },
             "android": {
                 "priority": "high",
                 "ttl": "120s",
-                "notification": {
-                    "channel_id": "curax_alert_channel",
-                    "priority": "high",
-                    "sound": "default",
-                    "default_sound": True,
-                },
             },
         }
     }
-
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
