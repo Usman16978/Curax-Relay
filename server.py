@@ -43,7 +43,6 @@ def _get_access_token() -> Optional[str]:
     creds = _get_fcm_credentials()
     if creds is None:
         return None
-
     try:
         if not creds.valid or creds.expired or not creds.token:
             creds.refresh(Request())
@@ -80,14 +79,17 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
                 "ttl": "120s",
                 "notification": {
                     "channel_id": "curax_alert_channel",
-                    "priority": "high",
+                    "priority": "max",
                     "visibility": "public",
+                    "sound": "default",
                     "default_sound": True,
+                    "notification_priority": "PRIORITY_MAX",
                     "click_action": "CURAX_ALERT",
                 },
             },
         }
     }
+
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
@@ -133,7 +135,7 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         api_key = (data.get("api_key") or "").strip()
 
         # Backend sends: action="alert", bot_id, api_key, type, message, fcm_token (from DB).
-        # Alert goes directly via FCM when we have fcm_token – no app socket needed. Socket is optional fallback.
+        # Alert goes directly via FCM when we have fcm_token � no app socket needed. Socket is optional fallback.
         if data.get("action") == "alert":
             bid = (data.get("bot_id") or "").strip()
             akey = (data.get("api_key") or "").strip()
@@ -209,7 +211,7 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
 
 
 async def status_handler(request: web.Request) -> web.StreamResponse:
-    """GET /status → { "fcm_configured": true|false }. Safe to call to verify FCM env vars are set (no secrets)."""
+    """GET /status ? { "fcm_configured": true|false }. Safe to call to verify FCM env vars are set (no secrets)."""
     creds_ready = bool(FIREBASE_PROJECT_ID and FIREBASE_SERVICE_ACCOUNT_JSON)
     return web.json_response({"fcm_configured": creds_ready, "relay": "ok"})
 
@@ -241,4 +243,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
