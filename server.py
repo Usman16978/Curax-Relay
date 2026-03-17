@@ -63,19 +63,25 @@ def _send_fcm_sync(token: str, alert_type: str, message: str) -> bool:
         return False
 
     url = f"https://fcm.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/messages:send"
-    title = "Curax Alert" if "medicine" not in alert_type.lower() else "Medicine reminder"
-    # Notification + data: system shows notification so screen wakes when off (Test Alert / any alert)
+    title = "Medicine reminder" if "medicine" in alert_type.lower() or alert_type in ("time", "pre") else "Alert"
+    # MUST: notification + data, priority high — so screen wakes when off (Test Alert / medicine)
     body = {
         "message": {
             "token": token,
             "data": {"type": alert_type, "message": message},
-            "notification": {"title": title, "body": message},
+            "notification": {
+                "title": title,
+                "body": message,
+                "sound": "default",
+            },
             "android": {
-                "priority": "HIGH",
+                "priority": "high",
                 "ttl": "120s",
                 "notification": {
                     "channel_id": "curax_alert_channel",
                     "priority": "high",
+                    "sound": "default",
+                    "default_sound": True,
                 },
             },
         }
